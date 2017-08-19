@@ -1,3 +1,9 @@
+# Custom additions
+.vscode/
+local_tools/
+
+### Below is the Go .gitignore provided by Github
+
 # Binaries for programs and plugins
 *.exe
 *.dll
