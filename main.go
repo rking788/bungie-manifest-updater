@@ -61,6 +61,8 @@ type ItemDefinition struct {
 
 func main() {
 
+	fmt.Printf("Running version=(%s) build on date=(%s)...\n", VERSION, BUILD_DATE)
+
 	client := http.DefaultClient
 	req, _ := http.NewRequest("GET", ManifestURL, nil)
 
@@ -109,7 +111,7 @@ func main() {
 		}
 
 		sqlitePath := downloadMobileWorldContentPath(path, lang)
-		defer os.Remove(sqlitePath)
+//		defer os.Remove(sqlitePath)
 
 		err = processManifestDB(lang, incomingChecksum, sqlitePath)
 	}
