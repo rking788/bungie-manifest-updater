@@ -14,5 +14,8 @@ build: genversion
 	go build
 install: genversion
 	go install
+deploy:
+	scp main.go db.go do:go/src/github.com/rking788/bungie-manifest-updater/
+	ssh do "cd go/src/github.com/rking788/bungie-manifest-updater && go build"
 clean:
 	rm $(APP_NAME)

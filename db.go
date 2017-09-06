@@ -165,7 +165,7 @@ func (out *OutputDB) DumpNewItemDefintions(locale, checksum string, definitions 
 	// Insert all rows into the temp new table
 	txStmt := tx.Stmt(stmt)
 	for _, def := range definitions {
-		_, err = txStmt.Exec(def.ItemHash, strings.ToLower(def.ItemName), def.ItemType, strings.ToLower(def.ItemTypeName), def.TierType, strings.ToLower(def.TierTypeName), def.ClassType, def.Equippable, def.MaxStackSize, def.DisplaySource, def.NonTransferrable, def.BucketTypeHash)
+		_, err = txStmt.Exec(def.ItemHash, strings.ToLower(def.DisplayProperties.ItemName), def.ItemType, strings.ToLower(def.ItemTypeName), def.Inventory.TierType, strings.ToLower(def.Inventory.TierTypeName), def.ClassType, def.Equippable, def.Inventory.MaxStackSize, def.DisplaySource, def.NonTransferrable, def.BucketTypeHash)
 		if err != nil {
 			fmt.Println("Error inserting item definition: ", err.Error())
 		}

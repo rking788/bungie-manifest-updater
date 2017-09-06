@@ -14,7 +14,7 @@ const (
 	// BaseURL is the base of all URLs for requesting data from Bungie.
 	BaseURL = "https://www.bungie.net"
 	// ManifestURL is the URL for the manifest spec that will point to the individual manifest DBs.
-	ManifestURL = BaseURL + "/Platform/Destiny/Manifest/"
+	ManifestURL = BaseURL + "/Platform/Destiny2/Manifest/"
 )
 
 // ManifestSpecResponse is the response from the public manifest endpoint provided by Bungie.
@@ -45,18 +45,24 @@ type ManifestRow struct {
 // ItemDefinition stores all of the fields from the DestinyInventoryItemDefinitions table
 // that we are concerned with.
 type ItemDefinition struct {
-	ItemHash         int    `json:"itemHash"`
-	ItemName         string `json:"itemName"`
+	ItemHash         int    `json:"hash"`
 	ItemType         int    `json:"itemType"`
-	ItemTypeName     string `json:"itemTypeName"`
-	TierType         int    `json:"tierType"`
-	TierTypeName     string `json:"tierTypeName"`
+	ItemTypeName     string `json:"itemTypeDisplayName"`
 	ClassType        int    `json:"classType"`
 	Equippable       bool   `json:"equippable"`
-	MaxStackSize     int    `json:"maxStackSize"`
 	DisplaySource    string `json:"displaySource"`
 	NonTransferrable bool   `json:"nonTransferrable"`
 	BucketTypeHash   int64  `json:"bucketTypeHash"`
+	Inventory        struct {
+		TierType     int    `json:"tierType"`
+		TierTypeName string `json:"tierTypeName"`
+		MaxStackSize int    `json:"maxStackSize"`
+	} `json:"inventory"`
+	DisplayProperties struct {
+		Icon        string `json:"icon"`
+		Description string `json:"description"`
+		ItemName    string `json:"name"`
+	} `json:"displayProperties"`
 }
 
 func main() {
@@ -111,7 +117,7 @@ func main() {
 		}
 
 		sqlitePath := downloadMobileWorldContentPath(path, lang)
-//		defer os.Remove(sqlitePath)
+		defer os.Remove(sqlitePath)
 
 		err = processManifestDB(lang, incomingChecksum, sqlitePath)
 	}
