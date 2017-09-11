@@ -52,11 +52,11 @@ type ItemDefinition struct {
 	Equippable       bool   `json:"equippable"`
 	DisplaySource    string `json:"displaySource"`
 	NonTransferrable bool   `json:"nonTransferrable"`
-	BucketTypeHash   int64  `json:"bucketTypeHash"`
 	Inventory        struct {
-		TierType     int    `json:"tierType"`
-		TierTypeName string `json:"tierTypeName"`
-		MaxStackSize int    `json:"maxStackSize"`
+		TierType       int    `json:"tierType"`
+		TierTypeName   string `json:"tierTypeName"`
+		MaxStackSize   int    `json:"maxStackSize"`
+		BucketTypeHash int64  `json:"bucketTypeHash"`
 	} `json:"inventory"`
 	DisplayProperties struct {
 		Icon        string `json:"icon"`
