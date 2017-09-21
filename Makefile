@@ -3,6 +3,7 @@ VERSIONFILE := version.go
 APP_VERSION := `bash ./generate_version.sh`
 APP_NAME := "bungie-manifest-updater"
 
+all: build
 genversion:
 	rm -f $(VERSIONFILE)
 	@echo "package main" > $(VERSIONFILE)
@@ -12,6 +13,8 @@ genversion:
 	@echo ")" >> $(VERSIONFILE)
 build: genversion
 	go build
+test:
+	go test -v ./...
 install: genversion
 	go install
 deploy:
