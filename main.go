@@ -65,6 +65,14 @@ type ItemDefinition struct {
 	} `json:"displayProperties"`
 }
 
+type BucketDefinition struct {
+	BucketHash        int `json:"hash"`
+	DisplayProperties struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	} `json:"displayProperties"`
+}
+
 func main() {
 
 	fmt.Printf("Running version=(%s) build on date=(%s)...\n", VERSION, BUILD_DATE)
@@ -206,18 +214,28 @@ func downloadMobileWorldContentPath(resourcePath, language string) string {
 // be stored when the new table is written to provide caching support next time.
 func processManifestDB(locale, checksum, sqlitePath string) error {
 
-	input, err := GetInputDBConnection(sqlitePath)
+	in, err := GetInputDBConnection(sqlitePath)
 	if err != nil {
 		fmt.Println("Error opening the input database: ", err.Error())
 		return err
 	}
-	defer input.Database.Close()
+	defer in.Database.Close()
 	_, err = GetOutputDBConnection()
 	if err != nil {
 		fmt.Println("Error opening output database: ", err.Error())
 		return err
 	}
 
+	// DestinyInventoryItemDefinitions
+	err = parseItemDefinitions(in, locale, checksum)
+
+	// DestinyInventoryBucketDefinition
+	err = parseBucketDefinitions(in, locale, checksum)
+
+	return err
+}
+
+func parseItemDefinitions(inputDB *InputDB, locale, checksum string) error {
 	inRows, err := input.GetItemDefinitions()
 	if err != nil {
 		fmt.Println("Error reading item definitions from sqlite: ", err.Error())
@@ -244,4 +262,29 @@ func processManifestDB(locale, checksum, sqlitePath string) error {
 	}
 
 	return err
+}
+
+func parseBucketDefinitions(inputDB *InputDB, locale, checksum string) error {
+
+	bucketRows, err := inputDB.GetBucketDefinitions()
+	if err != nil {
+		fmt.Println("Error reading item definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer bucketRows.Close()
+
+	bucketDefs := make([]*BucketDefinition, 0)
+	for bucketRows.Next() {
+		row := ManifestRow{}
+		bucketRows.Scan(&row.ID, &row.JSON)
+
+		bucket := BucketDefinition{}
+		json.Unmarshal([]byte(row.JSON), &bucket)
+
+		bucketDefs = append(bucketDefs, &bucket)
+	}
+
+	fmt.Printf("Processed %d bucket definitions\n", len(bucketDefs))
+
+	return output.DumpNewBucketDefintions(locale, checksum, bucketDefs)
 }

@@ -130,6 +130,15 @@ func (in *InputDB) GetItemDefinitions() (*sql.Rows, error) {
 	return rows, err
 }
 
+// GetBucketDefinitions is responsible for reading all of the bucket definitions
+// out of the Destiny manifest database and returning the rows.
+func (in *InputDB) GetBucketDefinitions() (*sql.Rows, error) {
+
+	rows, err := in.Database.Query("SELECT * FROM DestinyInventoryBucketDefinition")
+
+	return rows, err
+}
+
 // SaveManifestChecksum is responsible for persisting the checksum for the
 // specified locale to be used for caching later.
 func (out *OutputDB) SaveManifestChecksum(locale, checksum string) error {
@@ -184,6 +193,63 @@ func (out *OutputDB) DumpNewItemDefintions(locale, checksum string, definitions 
 	err = tx.Commit()
 	if err != nil {
 		fmt.Println("Error commiting transaction for inserting new item definitions: ", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// DumpNewBucketDefinitions will take all of the bucket definitions parsed out of the latest
+// manifest from Bungie and write them to the output database to be used for bucket lookups later.
+func (out *OutputDB) DumpNewBucketDefintions(locale, checksum string, definitions []*BucketDefinition) error {
+
+	newTableTempName := fmt.Sprintf("buckets_%s", checksum)
+
+	// Inside a transaction we need to Insert all bucket definitions into a new DB and then rename the old db, rename the new one, delete the old one.
+	// TODO: https://dba.stackexchange.com/questions/100779/how-to-atomically-replace-table-data-in-postgresql
+
+	// Create temp new table
+	out.Database.Exec("CREATE TABLE " + newTableTempName + "(LIKE \"buckets\")")
+	out.Database.Exec("ALTER TABLE " + newTableTempName + " ADD PRIMARY KEY (bucket_hash)")
+
+	stmt, err := out.Database.Prepare("INSERT INTO " + newTableTempName + " (bucket_hash, name,description) VALUES($1, $2, $3)")
+	if err != nil {
+		fmt.Println("Error preparing insert statement: ", err.Error())
+		return err
+	}
+	tx, err := out.Database.Begin()
+	if err != nil {
+		fmt.Println("Error opening transaction to output DB: ", err.Error())
+		return err
+	}
+
+	// Insert all rows into the temp new table
+	txStmt := tx.Stmt(stmt)
+	for _, def := range definitions {
+		if def.DisplayProperties.Name == "" {
+			continue
+		}
+
+		_, err = txStmt.Exec(def.BucketHash, strings.ToLower(def.DisplayProperties.Name),
+			def.DisplayProperties.Description)
+		if err != nil {
+			fmt.Println("Error inserting bucket definition: ", err.Error())
+		}
+	}
+
+	// Rename existing table with _old suffix
+	tx.Exec("ALTER TABLE \"buckets\" RENAME TO \"buckets_old\"")
+
+	// Rename new temp table with permanent table name
+	tx.Exec("ALTER TABLE " + newTableTempName + " RENAME TO \"buckets\"")
+
+	// Drop old table
+	tx.Exec("DROP TABLE \"buckets_old\"")
+
+	// Commit or Rollback if there were errors
+	err = tx.Commit()
+	if err != nil {
+		fmt.Println("Error commiting transaction for inserting new bucket definitions: ", err.Error())
 		return err
 	}
 
