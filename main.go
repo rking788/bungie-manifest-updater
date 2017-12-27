@@ -3,6 +3,8 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,32 +77,15 @@ type BucketDefinition struct {
 
 func main() {
 
-	fmt.Printf("Running version=(%s) build on date=(%s)...\n", VERSION, BUILD_DATE)
+	withItems := flag.Bool("items", false, "Use this to request item entries be parsed from the manifest")
+	withAssets := flag.Bool("assets", false, "Use this flag to request assets be parsed")
+	flag.Parse()
 
-	client := http.DefaultClient
-	req, _ := http.NewRequest("GET", ManifestURL, nil)
+	fmt.Printf("Running version=(%s) build on date=(%s)\n", VERSION, BUILD_DATE)
 
-	bungieAPIKey := os.Getenv("BUNGIE_API_KEY")
-	if bungieAPIKey != "" {
-		// Providing an API Key will decrease the chances of the request being throttled
-		req.Header.Add("X-Api-Key", bungieAPIKey)
-	}
-	resp, err := client.Do(req)
+	manifestSpec, err := readManifestSpec()
 	if err != nil {
-		fmt.Println("Failed to make request to Bungie for the manifest spec")
-		return
-	}
-	defer resp.Body.Close()
-
-	manifestSpec := &ManifestSpecResponse{}
-	err = json.NewDecoder(resp.Body).Decode(manifestSpec)
-	if err != nil {
-		fmt.Println("Error parsing manifest spec response: ", err.Error())
-		return
-	}
-
-	if manifestSpec.ErrorStatus != "Success" || manifestSpec.Message != "Ok" {
-		fmt.Println("Error response from Bungie for manifest spec.")
+		fmt.Printf("Error requesting manfiest spec from Bungie: %s\n", err.Error())
 		return
 	}
 
@@ -112,23 +97,44 @@ func main() {
 		return
 	}
 
-	for lang, path := range manifestSpec.Response.MobileWorldContentPaths {
-		if lang != "en" {
-			continue
-		}
-		fmt.Println("Checking manifest for language: ", lang)
-		currentChecksum := manifestChecksums[lang]
-		incomingChecksum := checksumFromManifestFilename(path)
-		if currentChecksum != "" && currentChecksum == incomingChecksum {
-			fmt.Println("Incoming manifest is the same as the current one already stored...skipping!")
-			continue
-		}
-
-		sqlitePath := downloadMobileWorldContentPath(path, lang)
-		defer os.Remove(sqlitePath)
-
-		err = processManifestDB(lang, incomingChecksum, sqlitePath)
+	if *withAssets {
+		fmt.Println("Processing assets...")
+		processAssets(manifestSpec)
 	}
+	if *withItems {
+		fmt.Println("Processing items...")
+		processItems(manifestSpec, manifestChecksums)
+	}
+}
+
+// readManifestSpec will read the manifest spec that contains the URLs to the individual manifest
+// databases. The databases are sent as zipped sqlite databases.
+func readManifestSpec() (*ManifestSpecResponse, error) {
+	client := http.DefaultClient
+	req, _ := http.NewRequest("GET", ManifestURL, nil)
+
+	bungieAPIKey := os.Getenv("BUNGIE_API_KEY")
+	if bungieAPIKey != "" {
+		// Providing an API Key will decrease the chances of the request being throttled
+		req.Header.Add("X-Api-Key", bungieAPIKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errors.New("Failed to make request to Bungie for the manifest spec")
+	}
+	defer resp.Body.Close()
+
+	manifestSpec := &ManifestSpecResponse{}
+	err = json.NewDecoder(resp.Body).Decode(manifestSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	if manifestSpec.ErrorStatus != "Success" || manifestSpec.Message != "Ok" {
+		return nil, errors.New("Error response from Bungie for manifest spec")
+	}
+
+	return manifestSpec, nil
 }
 
 // checksumFromManifestFilename parses the md5sum value out of the manifest path
@@ -143,10 +149,88 @@ func checksumFromManifestFilename(path string) string {
 	return path[underscoreIndex+1 : dotIndex-1]
 }
 
+func processAssets(manifestSpec *ManifestSpecResponse) {
+
+	zippedDBName := fmt.Sprintf("asset_sql_content.content")
+	// TODO: This 2 here is hardcoded. the manifest spec has some weird entries for assets.
+	// This should be removed later or possibly changed to a different index at some point.
+	resourcePath := manifestSpec.Response.MobileGearAssetDataBases[2].Path
+	sqlitePath := downloadZippedManifestDB(resourcePath, "", zippedDBName)
+	fmt.Println(sqlitePath)
+	defer os.Remove(sqlitePath)
+
+	err := processGearAssetsManifestDB(sqlitePath)
+	if err != nil {
+		fmt.Printf("Error processing gear assets manifest DB: %s\n", err.Error())
+		return
+	}
+}
+
+func processGearAssetsManifestDB(sqlitePath string) error {
+
+	in, err := GetInputDBConnection(sqlitePath)
+	if err != nil {
+		return err
+	}
+	defer in.Database.Close()
+	_, err = GetOutputDBConnection()
+	if err != nil {
+		return err
+	}
+
+	rows, err := in.GetGearAssetsDefinition()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	manifestRows := make([]*ManifestRow, 0, 100)
+	for rows.Next() {
+		row := &ManifestRow{}
+		err = rows.Scan(&row.ID, &row.JSON)
+		if err != nil {
+			fmt.Printf("Failed to scan input from assets table: %s\n", err.Error())
+		}
+
+		manifestRows = append(manifestRows, row)
+	}
+
+	err = output.DumpGearAssetsDefinitions(manifestRows)
+	fmt.Printf("Processed %d asset definitions...\n", len(manifestRows))
+
+	return err
+}
+
+func processItems(manifestSpec *ManifestSpecResponse, currentChecksums map[string]string) {
+	for lang, path := range manifestSpec.Response.MobileWorldContentPaths {
+		if lang != "en" {
+			// For now, only parsing the english items manifest
+			continue
+		}
+
+		fmt.Println("Checking manifest for language: ", lang)
+		currentChecksum := currentChecksums[lang]
+		incomingChecksum := checksumFromManifestFilename(path)
+		if currentChecksum != "" && currentChecksum == incomingChecksum {
+			fmt.Println("Incoming manifest is the same as the current one already stored...skipping!")
+			continue
+		}
+
+		zippedDBName := fmt.Sprintf("world_sql_content_%s.content", lang)
+		sqlitePath := downloadZippedManifestDB(path, lang, zippedDBName)
+		defer os.Remove(sqlitePath)
+
+		err := processWorldContentsManifestDB(lang, incomingChecksum, sqlitePath)
+		if err != nil {
+			fmt.Printf("Failed to process items database for lang(%s): %s\n", lang, err.Error())
+		}
+	}
+}
+
 // parseMobileWorldContentPath will download and unzip the world content database,
 // unzip it, and save the sqlite database somewhere on disk. The return value
-// is the location on disk where the sqlite database is saved.
-func downloadMobileWorldContentPath(resourcePath, language string) string {
+// is the location on disk where the extracted sqlite database is saved.
+func downloadZippedManifestDB(resourcePath, language, zippedDBName string) string {
 
 	client := http.DefaultClient
 	req, _ := http.NewRequest("GET", BaseURL+resourcePath, nil)
@@ -164,7 +248,7 @@ func downloadMobileWorldContentPath(resourcePath, language string) string {
 	defer resp.Body.Close()
 
 	// Download the zipped content
-	zipPath := fmt.Sprintf("world_sql_content_%s.content", language)
+	zipPath := zippedDBName
 	output, err := os.OpenFile(zipPath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("Failed to open output file for writing: ", err.Error())
@@ -212,7 +296,7 @@ func downloadMobileWorldContentPath(resourcePath, language string) string {
 // reading the desired fields out of the manifest and inserting them into the new relational DB.
 // The checksum provided is the md5 of the SQLite database file being processed. This should
 // be stored when the new table is written to provide caching support next time.
-func processManifestDB(locale, checksum, sqlitePath string) error {
+func processWorldContentsManifestDB(locale, checksum, sqlitePath string) error {
 
 	in, err := GetInputDBConnection(sqlitePath)
 	if err != nil {
@@ -236,7 +320,7 @@ func processManifestDB(locale, checksum, sqlitePath string) error {
 }
 
 func parseItemDefinitions(inputDB *InputDB, locale, checksum string) error {
-	inRows, err := input.GetItemDefinitions()
+	inRows, err := inputDB.GetItemDefinitions()
 	if err != nil {
 		fmt.Println("Error reading item definitions from sqlite: ", err.Error())
 		return err

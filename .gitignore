@@ -1,6 +1,7 @@
 # Custom additions
 .vscode/
 local_tools/
+bungie-manifest-updater
 
 ### Below is the Go .gitignore provided by Github
 

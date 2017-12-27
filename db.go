@@ -139,6 +139,14 @@ func (in *InputDB) GetBucketDefinitions() (*sql.Rows, error) {
 	return rows, err
 }
 
+// GetGearAssetsDefinition will request all rows from the assets table and return the rows.
+func (in *InputDB) GetGearAssetsDefinition() (*sql.Rows, error) {
+
+	rows, err := in.Database.Query("SELECT * FROM DestinyGearAssetsDefinition")
+
+	return rows, err
+}
+
 // SaveManifestChecksum is responsible for persisting the checksum for the
 // specified locale to be used for caching later.
 func (out *OutputDB) SaveManifestChecksum(locale, checksum string) error {
@@ -251,6 +259,26 @@ func (out *OutputDB) DumpNewBucketDefintions(locale, checksum string, definition
 	if err != nil {
 		fmt.Println("Error commiting transaction for inserting new bucket definitions: ", err.Error())
 		return err
+	}
+
+	return nil
+}
+
+func (out *OutputDB) DumpGearAssetsDefinitions(definitions []*ManifestRow) error {
+
+	out.Database.Exec("DELETE FROM assets WHERE true")
+
+	stmt, err := out.Database.Prepare("INSERT INTO assets (id, json) VALUES ($1, $2)")
+	if err != nil {
+		return err
+	}
+
+	for _, def := range definitions {
+		_, err = stmt.Exec(uint32(def.ID), def.JSON)
+
+		if err != nil {
+			fmt.Printf("Failed to insert row into assets defintiions: %s\n", err.Error())
+		}
 	}
 
 	return nil
