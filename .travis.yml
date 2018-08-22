@@ -1,11 +1,7 @@
 language: go
-
 go:
-    - tip
-
-install:
-    go get -u -v ./...
-
+- tip
+install: go get -u -v ./...
 script:
-    - make build
-    - make test
+- make build
+- make test

@@ -168,7 +168,7 @@ func (out *OutputDB) DumpNewItemDefintions(locale, checksum string, definitions 
 	out.Database.Exec("CREATE TABLE " + newTableTempName + "(LIKE \"items\")")
 	out.Database.Exec("ALTER TABLE " + newTableTempName + " ADD PRIMARY KEY (item_hash)")
 
-	stmt, err := out.Database.Prepare("INSERT INTO " + newTableTempName + " (item_hash, item_name, item_type, item_type_name, tier_type, tier_type_name, class_type, equippable, max_stack_size, display_source, non_transferrable, bucket_type_hash) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)")
+	stmt, err := out.Database.Prepare("INSERT INTO " + newTableTempName + " (item_hash, item_name, item_type, item_type_name, tier_type, tier_type_name, class_type, equippable, max_stack_size, display_source, non_transferrable, bucket_type_hash, icon) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)")
 	if err != nil {
 		fmt.Println("Error preparing insert statement: ", err.Error())
 		return err
@@ -182,7 +182,7 @@ func (out *OutputDB) DumpNewItemDefintions(locale, checksum string, definitions 
 	// Insert all rows into the temp new table
 	txStmt := tx.Stmt(stmt)
 	for _, def := range definitions {
-		_, err = txStmt.Exec(def.ItemHash, strings.ToLower(def.DisplayProperties.ItemName), def.ItemType, strings.ToLower(def.ItemTypeName), def.Inventory.TierType, strings.ToLower(def.Inventory.TierTypeName), def.ClassType, def.Equippable, def.Inventory.MaxStackSize, def.DisplaySource, def.NonTransferrable, def.Inventory.BucketTypeHash)
+		_, err = txStmt.Exec(def.ItemHash, strings.ToLower(def.DisplayProperties.ItemName), def.ItemType, strings.ToLower(def.ItemTypeName), def.Inventory.TierType, strings.ToLower(def.Inventory.TierTypeName), def.ClassType, def.Equippable, def.Inventory.MaxStackSize, def.DisplaySource, def.NonTransferrable, def.Inventory.BucketTypeHash, def.DisplayProperties.Icon)
 		if err != nil {
 			fmt.Println("Error inserting item definition: ", err.Error())
 		}

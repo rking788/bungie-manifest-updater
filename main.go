@@ -172,7 +172,7 @@ func processGearAssetsManifestDB(sqlitePath string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Database.Close()
+	//defer in.Database.Close()
 	_, err = GetOutputDBConnection()
 	if err != nil {
 		return err
@@ -303,7 +303,7 @@ func processWorldContentsManifestDB(locale, checksum, sqlitePath string) error {
 		fmt.Println("Error opening the input database: ", err.Error())
 		return err
 	}
-	defer in.Database.Close()
+	//defer in.Database.Close()
 	_, err = GetOutputDBConnection()
 	if err != nil {
 		fmt.Println("Error opening output database: ", err.Error())
