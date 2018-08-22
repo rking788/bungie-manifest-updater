@@ -75,6 +75,14 @@ type BucketDefinition struct {
 	} `json:"displayProperties"`
 }
 
+type ActivityModifierDefinition struct {
+	Hash              uint `json:"hash"`
+	DisplayProperties struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+}
+
 func main() {
 
 	withItems := flag.Bool("items", false, "Use this to request item entries be parsed from the manifest")
@@ -316,6 +324,8 @@ func processWorldContentsManifestDB(locale, checksum, sqlitePath string) error {
 	// DestinyInventoryBucketDefinition
 	err = parseBucketDefinitions(in, locale, checksum)
 
+	err = parseActivityModifiers(in, locale, checksum)
+
 	return err
 }
 
@@ -371,4 +381,29 @@ func parseBucketDefinitions(inputDB *InputDB, locale, checksum string) error {
 	fmt.Printf("Processed %d bucket definitions\n", len(bucketDefs))
 
 	return output.DumpNewBucketDefintions(locale, checksum, bucketDefs)
+}
+
+func parseActivityModifiers(inputDB *InputDB, locale, checksum string) error {
+
+	modifierRows, err := inputDB.GetActivityModifierDefinitions()
+	if err != nil {
+		fmt.Println("Error reading item definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer modifierRows.Close()
+
+	modifierDefs := make([]*ActivityModifierDefinition, 0)
+	for modifierRows.Next() {
+		row := ManifestRow{}
+		modifierRows.Scan(&row.ID, &row.JSON)
+
+		modifier := ActivityModifierDefinition{}
+		json.Unmarshal([]byte(row.JSON), &modifier)
+
+		modifierDefs = append(modifierDefs, &modifier)
+	}
+
+	fmt.Printf("Processed %d activity modifier definitions\n", len(modifierDefs))
+
+	return output.DumpNewActivityModifierDefinitions(locale, checksum, modifierDefs)
 }

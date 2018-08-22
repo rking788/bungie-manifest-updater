@@ -63,7 +63,7 @@ func InitInputDatabase(dbPath string) error {
 func GetOutputDBConnection() (*OutputDB, error) {
 
 	if output == nil {
-		fmt.Println("Initializing db!")
+		fmt.Println("Initializing output db!")
 		err := InitOutputDatabase()
 		if err != nil {
 			fmt.Println("Failed to initialize the database: ", err.Error())
@@ -79,12 +79,14 @@ func GetOutputDBConnection() (*OutputDB, error) {
 func GetInputDBConnection(path string) (*InputDB, error) {
 
 	if input == nil {
-		fmt.Println("Initializing db!")
+		fmt.Println("Initializing input db!")
 		err := InitInputDatabase(path)
 		if err != nil {
 			fmt.Println("Failed to initialize the database: ", err.Error())
 			return nil, err
 		}
+	} else {
+		fmt.Println("Input DB already initialized")
 	}
 
 	return input, nil
@@ -135,6 +137,15 @@ func (in *InputDB) GetItemDefinitions() (*sql.Rows, error) {
 func (in *InputDB) GetBucketDefinitions() (*sql.Rows, error) {
 
 	rows, err := in.Database.Query("SELECT * FROM DestinyInventoryBucketDefinition")
+
+	return rows, err
+}
+
+// GetActivityModifierDefinitions is responsible for reading all of the modifiers
+// out of the manifest database.
+func (in *InputDB) GetActivityModifierDefinitions() (*sql.Rows, error) {
+
+	rows, err := in.Database.Query("SELECT * FROM DestinyActivityModifierDefinition")
 
 	return rows, err
 }
@@ -253,6 +264,65 @@ func (out *OutputDB) DumpNewBucketDefintions(locale, checksum string, definition
 
 	// Drop old table
 	tx.Exec("DROP TABLE \"buckets_old\"")
+
+	// Commit or Rollback if there were errors
+	err = tx.Commit()
+	if err != nil {
+		fmt.Println("Error commiting transaction for inserting new bucket definitions: ", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// DumpNewActivityModifierDefinitions will take all of the bucket definitions parsed
+// out of the latest manifest from Bungie and write them to the output database to be
+// used for bucket lookups later.
+func (out *OutputDB) DumpNewActivityModifierDefinitions(locale, checksum string, definitions []*ActivityModifierDefinition) error {
+
+	newTableTempName := fmt.Sprintf("activity_modifiers_%s", checksum)
+
+	// Inside a transaction we need to Insert all bucket definitions into a new DB and then
+	// rename the old db, rename the new one, delete the old one.
+	// TODO: https://dba.stackexchange.com/questions/100779/how-to-atomically-replace-table-data-in-postgresql
+
+	// Create temp new table
+	out.Database.Exec("CREATE TABLE " + newTableTempName + "(LIKE \"activity_modifiers\")")
+	out.Database.Exec("ALTER TABLE " + newTableTempName + " ADD PRIMARY KEY (hash)")
+
+	stmt, err := out.Database.Prepare("INSERT INTO " + newTableTempName + " (hash, name, description) VALUES($1, $2, $3)")
+	if err != nil {
+		fmt.Println("Error preparing insert statement: ", err.Error())
+		return err
+	}
+	tx, err := out.Database.Begin()
+	if err != nil {
+		fmt.Println("Error opening transaction to output DB: ", err.Error())
+		return err
+	}
+
+	// Insert all rows into the temp new table
+	txStmt := tx.Stmt(stmt)
+	for _, def := range definitions {
+		if def.DisplayProperties.Name == "" {
+			continue
+		}
+
+		_, err = txStmt.Exec(def.Hash, strings.ToLower(def.DisplayProperties.Name),
+			def.DisplayProperties.Description)
+		if err != nil {
+			fmt.Println("Error inserting activity modifier definition: ", err.Error())
+		}
+	}
+
+	// Rename existing table with _old suffix
+	tx.Exec("ALTER TABLE \"activity_modifiers\" RENAME TO \"activity_modifiers_old\"")
+
+	// Rename new temp table with permanent table name
+	tx.Exec("ALTER TABLE " + newTableTempName + " RENAME TO \"activity_modifiers\"")
+
+	// Drop old table
+	tx.Exec("DROP TABLE \"activity_modifiers_old\"")
 
 	// Commit or Rollback if there were errors
 	err = tx.Commit()
