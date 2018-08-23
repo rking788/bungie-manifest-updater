@@ -150,6 +150,42 @@ func (in *InputDB) GetActivityModifierDefinitions() (*sql.Rows, error) {
 	return rows, err
 }
 
+// GetActivityTypeDefinitions is responsible for reading all of the modifiers
+// out of the manifest database.
+func (in *InputDB) GetActivityTypeDefinitions() (*sql.Rows, error) {
+
+	rows, err := in.Database.Query("SELECT * FROM DestinyActivityTypeDefinition")
+
+	return rows, err
+}
+
+// GetActivityModeDefinitions is responsible for reading all of the activity modes
+// out of the manifest database.
+func (in *InputDB) GetActivityModeDefinitions() (*sql.Rows, error) {
+
+	rows, err := in.Database.Query("SELECT * FROM DestinyActivityModeDefinition")
+
+	return rows, err
+}
+
+// GetDestinationDefinitions is responsible for reading all of the destinations
+// out of the manifest database.
+func (in *InputDB) GetDestinationDefinitions() (*sql.Rows, error) {
+
+	rows, err := in.Database.Query("SELECT * FROM DestinyDestinationDefinition")
+
+	return rows, err
+}
+
+// GetPlaceDefinitions is responsible for reading all of the places
+// out of the manifest database.
+func (in *InputDB) GetPlaceDefinitions() (*sql.Rows, error) {
+
+	rows, err := in.Database.Query("SELECT * FROM DestinyPlaceDefinition")
+
+	return rows, err
+}
+
 // GetGearAssetsDefinition will request all rows from the assets table and return the rows.
 func (in *InputDB) GetGearAssetsDefinition() (*sql.Rows, error) {
 
@@ -328,6 +364,244 @@ func (out *OutputDB) DumpNewActivityModifierDefinitions(locale, checksum string,
 	err = tx.Commit()
 	if err != nil {
 		fmt.Println("Error commiting transaction for inserting new bucket definitions: ", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// DumpNewActivityTypeDefinitions will take all of the activity type definitions parsed
+// out of the latest manifest from Bungie and write them to the output database to be
+// used for activity type lookups later.
+func (out *OutputDB) DumpNewActivityTypeDefinitions(locale, checksum string, definitions []*ActivityTypeDefinition) error {
+
+	newTableTempName := fmt.Sprintf("activity_types_%s", checksum)
+
+	// Inside a transaction we need to Insert all bucket definitions into a new DB and then
+	// rename the old db, rename the new one, delete the old one.
+	// TODO: https://dba.stackexchange.com/questions/100779/how-to-atomically-replace-table-data-in-postgresql
+
+	// Create temp new table
+	out.Database.Exec("CREATE TABLE " + newTableTempName + "(LIKE \"activity_types\")")
+	out.Database.Exec("ALTER TABLE " + newTableTempName + " ADD PRIMARY KEY (hash)")
+
+	stmt, err := out.Database.Prepare("INSERT INTO " + newTableTempName + " (hash, name, description) VALUES($1, $2, $3)")
+	if err != nil {
+		fmt.Println("Error preparing insert statement: ", err.Error())
+		return err
+	}
+	tx, err := out.Database.Begin()
+	if err != nil {
+		fmt.Println("Error opening transaction to output DB: ", err.Error())
+		return err
+	}
+
+	// Insert all rows into the temp new table
+	txStmt := tx.Stmt(stmt)
+	for _, def := range definitions {
+		if def.DisplayProperties.Name == "" {
+			continue
+		}
+
+		_, err = txStmt.Exec(def.Hash, strings.ToLower(def.DisplayProperties.Name),
+			def.DisplayProperties.Description)
+		if err != nil {
+			fmt.Println("Error inserting activity type definition: ", err.Error())
+		}
+	}
+
+	// Rename existing table with _old suffix
+	tx.Exec("ALTER TABLE \"activity_types\" RENAME TO \"activity_types_old\"")
+
+	// Rename new temp table with permanent table name
+	tx.Exec("ALTER TABLE " + newTableTempName + " RENAME TO \"activity_types\"")
+
+	// Drop old table
+	tx.Exec("DROP TABLE \"activity_types_old\"")
+
+	// Commit or Rollback if there were errors
+	err = tx.Commit()
+	if err != nil {
+		fmt.Println("Error commiting transaction for inserting new activity type definitions: ", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// DumpNewActivityModeDefinitions will take all of the activity mode definitions parsed
+// out of the latest manifest from Bungie and write them to the output database to be
+// used for activity type lookups later.
+func (out *OutputDB) DumpNewActivityModeDefinitions(locale, checksum string, definitions []*ActivityModeDefintion) error {
+
+	newTableTempName := fmt.Sprintf("activity_modes_%s", checksum)
+
+	// Inside a transaction we need to Insert all bucket definitions into a new DB and then
+	// rename the old db, rename the new one, delete the old one.
+	// TODO: https://dba.stackexchange.com/questions/100779/how-to-atomically-replace-table-data-in-postgresql
+
+	// Create temp new table
+	out.Database.Exec("CREATE TABLE " + newTableTempName + "(LIKE \"activity_modes\")")
+	out.Database.Exec("ALTER TABLE " + newTableTempName + " ADD PRIMARY KEY (hash)")
+
+	stmt, err := out.Database.Prepare("INSERT INTO " + newTableTempName +
+		" (hash, name, description, mode_type, category, tier, is_aggregate, is_team_based)" +
+		" VALUES($1, $2, $3, $4, $5, $6, $7, $8)")
+	if err != nil {
+		fmt.Println("Error preparing insert statement: ", err.Error())
+		return err
+	}
+	tx, err := out.Database.Begin()
+	if err != nil {
+		fmt.Println("Error opening transaction to output DB: ", err.Error())
+		return err
+	}
+
+	// Insert all rows into the temp new table
+	txStmt := tx.Stmt(stmt)
+	for _, def := range definitions {
+		if def.DisplayProperties.Name == "" {
+			continue
+		}
+
+		_, err = txStmt.Exec(def.Hash, strings.ToLower(def.DisplayProperties.Name),
+			def.DisplayProperties.Description, def.ModeType, def.Category, def.Tier, def.IsAggregate, def.IsTeamBased)
+		if err != nil {
+			fmt.Println("Error inserting activity type definition: ", err.Error())
+		}
+	}
+
+	// Rename existing table with _old suffix
+	tx.Exec("ALTER TABLE \"activity_modes\" RENAME TO \"activity_modes_old\"")
+
+	// Rename new temp table with permanent table name
+	tx.Exec("ALTER TABLE " + newTableTempName + " RENAME TO \"activity_modes\"")
+
+	// Drop old table
+	tx.Exec("DROP TABLE \"activity_modes_old\"")
+
+	// Commit or Rollback if there were errors
+	err = tx.Commit()
+	if err != nil {
+		fmt.Println("Error commiting transaction for inserting new activity mode definitions: ", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// DumpNewPlaceDefinitions will take all of the place definitions parsed
+// out of the latest manifest from Bungie and write them to the output database to be
+// used for activity type lookups later.
+func (out *OutputDB) DumpNewPlaceDefinitions(locale, checksum string, definitions []*PlaceDefinition) error {
+
+	newTableTempName := fmt.Sprintf("places_%s", checksum)
+
+	// Inside a transaction we need to Insert all bucket definitions into a new DB and then
+	// rename the old db, rename the new one, delete the old one.
+	// TODO: https://dba.stackexchange.com/questions/100779/how-to-atomically-replace-table-data-in-postgresql
+
+	// Create temp new table
+	out.Database.Exec("CREATE TABLE " + newTableTempName + "(LIKE \"places\")")
+	out.Database.Exec("ALTER TABLE " + newTableTempName + " ADD PRIMARY KEY (hash)")
+
+	stmt, err := out.Database.Prepare("INSERT INTO " + newTableTempName + " (hash, name, description) VALUES($1, $2, $3)")
+	if err != nil {
+		fmt.Println("Error preparing insert statement: ", err.Error())
+		return err
+	}
+	tx, err := out.Database.Begin()
+	if err != nil {
+		fmt.Println("Error opening transaction to output DB: ", err.Error())
+		return err
+	}
+
+	// Insert all rows into the temp new table
+	txStmt := tx.Stmt(stmt)
+	for _, def := range definitions {
+		if def.DisplayProperties.Name == "" {
+			continue
+		}
+
+		_, err = txStmt.Exec(def.Hash, strings.ToLower(def.DisplayProperties.Name),
+			def.DisplayProperties.Description)
+		if err != nil {
+			fmt.Println("Error inserting place definition: ", err.Error())
+		}
+	}
+
+	// Rename existing table with _old suffix
+	tx.Exec("ALTER TABLE \"places\" RENAME TO \"places_old\"")
+
+	// Rename new temp table with permanent table name
+	tx.Exec("ALTER TABLE " + newTableTempName + " RENAME TO \"places\"")
+
+	// Drop old table
+	tx.Exec("DROP TABLE \"places_old\"")
+
+	// Commit or Rollback if there were errors
+	err = tx.Commit()
+	if err != nil {
+		fmt.Println("Error commiting transaction for inserting new place definitions: ", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// DumpNewDestinationDefinitions will take all of the destination definitions parsed
+// out of the latest manifest from Bungie and write them to the output database to be
+// used for activity type lookups later.
+func (out *OutputDB) DumpNewDestinationDefinitions(locale, checksum string, definitions []*DestinationDefintion) error {
+
+	newTableTempName := fmt.Sprintf("destinations_%s", checksum)
+
+	// Inside a transaction we need to Insert all bucket definitions into a new DB and then
+	// rename the old db, rename the new one, delete the old one.
+	// TODO: https://dba.stackexchange.com/questions/100779/how-to-atomically-replace-table-data-in-postgresql
+
+	// Create temp new table
+	out.Database.Exec("CREATE TABLE " + newTableTempName + "(LIKE \"destinations\")")
+	out.Database.Exec("ALTER TABLE " + newTableTempName + " ADD PRIMARY KEY (hash)")
+
+	stmt, err := out.Database.Prepare("INSERT INTO " + newTableTempName + " (hash, name, description, place_hash) VALUES($1, $2, $3, $4)")
+	if err != nil {
+		fmt.Println("Error preparing insert statement: ", err.Error())
+		return err
+	}
+	tx, err := out.Database.Begin()
+	if err != nil {
+		fmt.Println("Error opening transaction to output DB: ", err.Error())
+		return err
+	}
+
+	// Insert all rows into the temp new table
+	txStmt := tx.Stmt(stmt)
+	for _, def := range definitions {
+		if def.DisplayProperties.Name == "" {
+			continue
+		}
+
+		_, err = txStmt.Exec(def.Hash, strings.ToLower(def.DisplayProperties.Name),
+			def.DisplayProperties.Description, def.PlaceHash)
+		if err != nil {
+			fmt.Println("Error inserting destination definition: ", err.Error())
+		}
+	}
+
+	// Rename existing table with _old suffix
+	tx.Exec("ALTER TABLE \"destinations\" RENAME TO \"destinations_old\"")
+
+	// Rename new temp table with permanent table name
+	tx.Exec("ALTER TABLE " + newTableTempName + " RENAME TO \"destinations\"")
+
+	// Drop old table
+	tx.Exec("DROP TABLE \"destinations_old\"")
+
+	// Commit or Rollback if there were errors
+	err = tx.Commit()
+	if err != nil {
+		fmt.Println("Error commiting transaction for inserting new destination definitions: ", err.Error())
 		return err
 	}
 

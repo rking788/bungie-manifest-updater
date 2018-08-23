@@ -80,7 +80,45 @@ type ActivityModifierDefinition struct {
 	DisplayProperties struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
-	}
+	} `json:"displayProperties"`
+}
+
+type ActivityTypeDefinition struct {
+	Hash              uint `json:"hash"`
+	DisplayProperties struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	} `json:"displayProperties"`
+}
+
+type ActivityModeDefintion struct {
+	Hash              uint `json:"hash"`
+	ModeType          int  `json:"modeType"`
+	Category          int  `json:"activityModeCategory"`
+	Tier              int  `json:"tier"`
+	IsAggregate       bool `json:"isAggregateMode"`
+	IsTeamBased       bool `json:"isTeamBased"`
+	DisplayProperties struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	} `json:"displayProperties"`
+}
+
+type PlaceDefinition struct {
+	Hash              uint `json:"hash"`
+	DisplayProperties struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	} `json:"displayProperties"`
+}
+
+type DestinationDefintion struct {
+	Hash              uint `json:"hash"`
+	PlaceHash         uint `json:"placeHash"`
+	DisplayProperties struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	} `json:"displayProperties"`
 }
 
 func main() {
@@ -325,6 +363,10 @@ func processWorldContentsManifestDB(locale, checksum, sqlitePath string) error {
 	err = parseBucketDefinitions(in, locale, checksum)
 
 	err = parseActivityModifiers(in, locale, checksum)
+	err = parseActivityTypes(in, locale, checksum)
+	err = parseActivityModes(in, locale, checksum)
+	err = parsePlaces(in, locale, checksum)
+	err = parseDestinations(in, locale, checksum)
 
 	return err
 }
@@ -406,4 +448,104 @@ func parseActivityModifiers(inputDB *InputDB, locale, checksum string) error {
 	fmt.Printf("Processed %d activity modifier definitions\n", len(modifierDefs))
 
 	return output.DumpNewActivityModifierDefinitions(locale, checksum, modifierDefs)
+}
+
+func parseActivityTypes(inputDB *InputDB, locale, checksum string) error {
+
+	activityTypeRows, err := inputDB.GetActivityTypeDefinitions()
+	if err != nil {
+		fmt.Println("Error reading activity types from sqlite: ", err.Error())
+		return err
+	}
+	defer activityTypeRows.Close()
+
+	activityTypeDefs := make([]*ActivityTypeDefinition, 0)
+	for activityTypeRows.Next() {
+		row := ManifestRow{}
+		activityTypeRows.Scan(&row.ID, &row.JSON)
+
+		activityType := ActivityTypeDefinition{}
+		json.Unmarshal([]byte(row.JSON), &activityType)
+
+		activityTypeDefs = append(activityTypeDefs, &activityType)
+	}
+
+	fmt.Printf("Processed %d activity type definitions\n", len(activityTypeDefs))
+
+	return output.DumpNewActivityTypeDefinitions(locale, checksum, activityTypeDefs)
+}
+
+func parseActivityModes(inputDB *InputDB, locale, checksum string) error {
+
+	activityModeRows, err := inputDB.GetActivityModeDefinitions()
+	if err != nil {
+		fmt.Println("Error reading activity mode definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer activityModeRows.Close()
+
+	activityModeDefs := make([]*ActivityModeDefintion, 0)
+	for activityModeRows.Next() {
+		row := ManifestRow{}
+		activityModeRows.Scan(&row.ID, &row.JSON)
+
+		mode := ActivityModeDefintion{}
+		json.Unmarshal([]byte(row.JSON), &mode)
+
+		activityModeDefs = append(activityModeDefs, &mode)
+	}
+
+	fmt.Printf("Processed %d activity mode definitions\n", len(activityModeDefs))
+
+	return output.DumpNewActivityModeDefinitions(locale, checksum, activityModeDefs)
+}
+
+func parsePlaces(inputDB *InputDB, locale, checksum string) error {
+
+	placeRows, err := inputDB.GetPlaceDefinitions()
+	if err != nil {
+		fmt.Println("Error reading place definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer placeRows.Close()
+
+	placeDefs := make([]*PlaceDefinition, 0)
+	for placeRows.Next() {
+		row := ManifestRow{}
+		placeRows.Scan(&row.ID, &row.JSON)
+
+		place := PlaceDefinition{}
+		json.Unmarshal([]byte(row.JSON), &place)
+
+		placeDefs = append(placeDefs, &place)
+	}
+
+	fmt.Printf("Processed %d place definitions\n", len(placeDefs))
+
+	return output.DumpNewPlaceDefinitions(locale, checksum, placeDefs)
+}
+
+func parseDestinations(inputDB *InputDB, locale, checksum string) error {
+
+	destinationRows, err := inputDB.GetDestinationDefinitions()
+	if err != nil {
+		fmt.Println("Error reading destination defintions from sqlite: ", err.Error())
+		return err
+	}
+	defer destinationRows.Close()
+
+	destinationDefs := make([]*DestinationDefintion, 0)
+	for destinationRows.Next() {
+		row := ManifestRow{}
+		destinationRows.Scan(&row.ID, &row.JSON)
+
+		destination := DestinationDefintion{}
+		json.Unmarshal([]byte(row.JSON), &destination)
+
+		destinationDefs = append(destinationDefs, &destination)
+	}
+
+	fmt.Printf("Processed %d destination definitions\n", len(destinationDefs))
+
+	return output.DumpNewDestinationDefinitions(locale, checksum, destinationDefs)
 }
