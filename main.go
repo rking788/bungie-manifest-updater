@@ -3,6 +3,8 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,6 +44,14 @@ type ManifestRow struct {
 	JSON string
 }
 
+// DisplayProperties represents almost any piece of the API that is
+// intended to be displayed on the screen in some way.
+type DisplayProperties struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Icon        string `json:"icon"`
+}
+
 // ItemDefinition stores all of the fields from the DestinyInventoryItemDefinitions table
 // that we are concerned with.
 type ItemDefinition struct {
@@ -58,41 +68,141 @@ type ItemDefinition struct {
 		MaxStackSize   int    `json:"maxStackSize"`
 		BucketTypeHash int64  `json:"bucketTypeHash"`
 	} `json:"inventory"`
-	DisplayProperties struct {
-		Icon        string `json:"icon"`
-		Description string `json:"description"`
-		ItemName    string `json:"name"`
-	} `json:"displayProperties"`
+	*DisplayProperties `json:"displayProperties"`
+}
+
+type BucketDefinition struct {
+	BucketHash         int `json:"hash"`
+	*DisplayProperties `json:"displayProperties"`
+}
+
+type ActivityModifierDefinition struct {
+	Hash               uint `json:"hash"`
+	*DisplayProperties `json:"displayProperties"`
+}
+
+type ActivityTypeDefinition struct {
+	Hash               uint `json:"hash"`
+	*DisplayProperties `json:"displayProperties"`
+}
+
+type ActivityModeDefintion struct {
+	Hash               uint `json:"hash"`
+	ModeType           int  `json:"modeType"`
+	Category           int  `json:"activityModeCategory"`
+	Tier               int  `json:"tier"`
+	IsAggregate        bool `json:"isAggregateMode"`
+	IsTeamBased        bool `json:"isTeamBased"`
+	*DisplayProperties `json:"displayProperties"`
+}
+
+type PlaceDefinition struct {
+	Hash               uint `json:"hash"`
+	*DisplayProperties `json:"displayProperties"`
+}
+
+type DestinationDefintion struct {
+	Hash               uint `json:"hash"`
+	PlaceHash          uint `json:"placeHash"`
+	*DisplayProperties `json:"displayProperties"`
+}
+
+/* Remove constraints
+ALTER TABLE activities DROP CONSTRAINT destination_hash_fkey;
+ALTER TABLE activities DROP CONSTRAINT place_hash_fkey;
+ALTER TABLE activities DROP CONSTRAINT activity_type_hash_fkey;
+ALTER TABLE activities DROP CONSTRAINT direct_activity_mode_hash_fkey;
+ALTER TABLE activities DROP CONSTRAINT direct_activity_mode_type_fkey;
+*/
+
+/*
+CREATE TABLE activities (
+	hash bigint PRIMARY KEY,
+	name text NOT NULL,
+	description text NOT NULL,
+
+	light_level integer,
+	destination_hash bigint,
+	place_hash bigint,
+	activity_type_hash bigint,
+	is_playlist boolean DEFAULT FALSE,
+	is_pvp boolean DEFAULT FALSE,
+	direct_activity_mode_hash bigint,
+	direct_activity_mode_type integer,
+	activity_mode_hashes json,
+	activity_mode_types json,
+	rewards json,
+	modifiers json,
+	challenges json,
+	matchmaking json
+);
+*/
+
+/* Add constraints
+ALTER TABLE activities ADD CONSTRAINT destination_hash_fkey FOREIGN KEY (destination_hash) REFERENCES destinations (hash);
+ALTER TABLE activities ADD CONSTRAINT place_hash_fkey FOREIGN KEY (place_hash) REFERENCES places (hash);
+ALTER TABLE activities ADD CONSTRAINT activity_type_hash_fkey FOREIGN KEY (activity_type_hash) REFERENCES activity_types (hash);
+ALTER TABLE activities ADD CONSTRAINT direct_activity_mode_hash_fkey FOREIGN KEY (direct_activity_mode_hash) REFERENCES activity_modes (hash)
+ALTER TABLE activities ADD CONSTRAINT direct_activity_mode_type_fkey FOREIGN KEY (direct_activity_mode_type) REFERENCES activity_modes (mode_type);
+*/
+
+type ActivityDefinition struct {
+	Hash                   uint   `json:"hash"`
+	LightLevel             uint   `json:"activityLightLevel"`
+	DestinationHash        uint   `json:"destinationHash"`
+	PlaceHash              uint   `json:"placeHash"`
+	ActivityTypeHash       uint   `json:"activityTypeHash"`
+	IsPlaylist             bool   `json:"isPlaylist"`
+	IsPVP                  bool   `json:"isPvP"`
+	DirectActivityModeHash uint   `json:"directActivityModeHash"`
+	DirectActivityModeType int    `json:"directActivityModeType"`
+	ActivityModeHashes     []uint `json:"activityModeHashes"`
+	ActivityModeTypes      []int  `json:"activityModeTypes"`
+
+	// TODO: Find the actual types for these, not just interface{}
+	Rewards []*struct {
+		RewardItems *struct {
+			ItemHash uint `json:"itemHash"`
+			Quantity uint `json:"quantity"`
+		} `json:"rewardItems"`
+	} `json:"rewards"`
+	Modifiers []*struct {
+		ActivityModifierHash uint `json:"activityModifierHash"`
+	} `json:"modifiers"`
+	Challenges []*struct {
+		RewardSiteHash           uint `json:"rewardSiteHash"`
+		InhibitRewardsUnlockHash uint `json:"inhibitRewardsUnlockHash"`
+		ObjectiveHash            uint `json:"objectiveHash"`
+	} `json:"challenges"`
+	PlaylistItems []*struct {
+		ActivityHash     uint `json:"activityHash"`
+		ActivityModeHash uint `json:"activityModeHash"`
+		Weight           uint `json:"weight"`
+	} `json:"playlistItems"`
+
+	Matchmaking *struct {
+		IsMatchmade bool `json:"isMatchmade"`
+		MinParty    int  `json:"minParty"`
+		MaxParty    int  `json:"maxParty"`
+		MaxPlayers  int  `json:"maxPlayers"`
+		// TODO: Not sure wth this is
+		RequiresGuardianOath bool `json:"requiresGuardianOath"`
+	} `json:"matchmaking"`
+	*DisplayProperties `json:"displayProperties"`
 }
 
 func main() {
 
-	fmt.Printf("Running version=(%s) build on date=(%s)...\n", VERSION, BUILD_DATE)
+	withItems := flag.Bool("items", false, "Use this to request item entries be parsed from the manifest")
+	withAssets := flag.Bool("assets", false, "Use this flag to request assets be parsed")
+	limit := flag.Int("limit", -1, "Use to limit the number of items imported, useful for platforms where row limits are a thing on free tiers. (looking at you Heroku)")
+	flag.Parse()
 
-	client := http.DefaultClient
-	req, _ := http.NewRequest("GET", ManifestURL, nil)
+	fmt.Printf("Running version=(%s) build on date=(%s)\n", VERSION, BUILD_DATE)
 
-	bungieAPIKey := os.Getenv("BUNGIE_API_KEY")
-	if bungieAPIKey != "" {
-		// Providing an API Key will decrease the chances of the request being throttled
-		req.Header.Add("X-Api-Key", bungieAPIKey)
-	}
-	resp, err := client.Do(req)
+	manifestSpec, err := readManifestSpec()
 	if err != nil {
-		fmt.Println("Failed to make request to Bungie for the manifest spec")
-		return
-	}
-	defer resp.Body.Close()
-
-	manifestSpec := &ManifestSpecResponse{}
-	err = json.NewDecoder(resp.Body).Decode(manifestSpec)
-	if err != nil {
-		fmt.Println("Error parsing manifest spec response: ", err.Error())
-		return
-	}
-
-	if manifestSpec.ErrorStatus != "Success" || manifestSpec.Message != "Ok" {
-		fmt.Println("Error response from Bungie for manifest spec.")
+		fmt.Printf("Error requesting manfiest spec from Bungie: %s\n", err.Error())
 		return
 	}
 
@@ -104,23 +214,44 @@ func main() {
 		return
 	}
 
-	for lang, path := range manifestSpec.Response.MobileWorldContentPaths {
-		if lang != "en" {
-			continue
-		}
-		fmt.Println("Checking manifest for language: ", lang)
-		currentChecksum := manifestChecksums[lang]
-		incomingChecksum := checksumFromManifestFilename(path)
-		if currentChecksum != "" && currentChecksum == incomingChecksum {
-			fmt.Println("Incoming manifest is the same as the current one already stored...skipping!")
-			continue
-		}
-
-		sqlitePath := downloadMobileWorldContentPath(path, lang)
-		defer os.Remove(sqlitePath)
-
-		err = processManifestDB(lang, incomingChecksum, sqlitePath)
+	if *withAssets {
+		fmt.Println("Processing assets...")
+		processAssets(manifestSpec)
 	}
+	if *withItems {
+		fmt.Println("Processing items...")
+		processItems(manifestSpec, manifestChecksums, *limit)
+	}
+}
+
+// readManifestSpec will read the manifest spec that contains the URLs to the individual manifest
+// databases. The databases are sent as zipped sqlite databases.
+func readManifestSpec() (*ManifestSpecResponse, error) {
+	client := http.DefaultClient
+	req, _ := http.NewRequest("GET", ManifestURL, nil)
+
+	bungieAPIKey := os.Getenv("BUNGIE_API_KEY")
+	if bungieAPIKey != "" {
+		// Providing an API Key will decrease the chances of the request being throttled
+		req.Header.Add("X-Api-Key", bungieAPIKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, errors.New("Failed to make request to Bungie for the manifest spec")
+	}
+	defer resp.Body.Close()
+
+	manifestSpec := &ManifestSpecResponse{}
+	err = json.NewDecoder(resp.Body).Decode(manifestSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	if manifestSpec.ErrorStatus != "Success" || manifestSpec.Message != "Ok" {
+		return nil, errors.New("Error response from Bungie for manifest spec")
+	}
+
+	return manifestSpec, nil
 }
 
 // checksumFromManifestFilename parses the md5sum value out of the manifest path
@@ -135,10 +266,88 @@ func checksumFromManifestFilename(path string) string {
 	return path[underscoreIndex+1 : dotIndex-1]
 }
 
+func processAssets(manifestSpec *ManifestSpecResponse) {
+
+	zippedDBName := fmt.Sprintf("asset_sql_content.content")
+	// TODO: This 2 here is hardcoded. the manifest spec has some weird entries for assets.
+	// This should be removed later or possibly changed to a different index at some point.
+	resourcePath := manifestSpec.Response.MobileGearAssetDataBases[2].Path
+	sqlitePath := downloadZippedManifestDB(resourcePath, "", zippedDBName)
+	fmt.Println(sqlitePath)
+	defer os.Remove(sqlitePath)
+
+	err := processGearAssetsManifestDB(sqlitePath)
+	if err != nil {
+		fmt.Printf("Error processing gear assets manifest DB: %s\n", err.Error())
+		return
+	}
+}
+
+func processGearAssetsManifestDB(sqlitePath string) error {
+
+	in, err := GetInputDBConnection(sqlitePath)
+	if err != nil {
+		return err
+	}
+	//defer in.Database.Close()
+	_, err = GetOutputDBConnection()
+	if err != nil {
+		return err
+	}
+
+	rows, err := in.GetGearAssetsDefinition()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	manifestRows := make([]*ManifestRow, 0, 100)
+	for rows.Next() {
+		row := &ManifestRow{}
+		err = rows.Scan(&row.ID, &row.JSON)
+		if err != nil {
+			fmt.Printf("Failed to scan input from assets table: %s\n", err.Error())
+		}
+
+		manifestRows = append(manifestRows, row)
+	}
+
+	err = output.DumpGearAssetsDefinitions(manifestRows)
+	fmt.Printf("Processed %d asset definitions...\n", len(manifestRows))
+
+	return err
+}
+
+func processItems(manifestSpec *ManifestSpecResponse, currentChecksums map[string]string, rowLimit int) {
+	for lang, path := range manifestSpec.Response.MobileWorldContentPaths {
+		if lang != "en" {
+			// For now, only parsing the english items manifest
+			continue
+		}
+
+		fmt.Println("Checking manifest for language: ", lang)
+		currentChecksum := currentChecksums[lang]
+		incomingChecksum := checksumFromManifestFilename(path)
+		if currentChecksum != "" && currentChecksum == incomingChecksum {
+			fmt.Println("Incoming manifest is the same as the current one already stored...skipping!")
+			continue
+		}
+
+		zippedDBName := fmt.Sprintf("world_sql_content_%s.content", lang)
+		sqlitePath := downloadZippedManifestDB(path, lang, zippedDBName)
+		defer os.Remove(sqlitePath)
+
+		err := processWorldContentsManifestDB(lang, incomingChecksum, sqlitePath, rowLimit)
+		if err != nil {
+			fmt.Printf("Failed to process items database for lang(%s): %s\n", lang, err.Error())
+		}
+	}
+}
+
 // parseMobileWorldContentPath will download and unzip the world content database,
 // unzip it, and save the sqlite database somewhere on disk. The return value
-// is the location on disk where the sqlite database is saved.
-func downloadMobileWorldContentPath(resourcePath, language string) string {
+// is the location on disk where the extracted sqlite database is saved.
+func downloadZippedManifestDB(resourcePath, language, zippedDBName string) string {
 
 	client := http.DefaultClient
 	req, _ := http.NewRequest("GET", BaseURL+resourcePath, nil)
@@ -156,7 +365,7 @@ func downloadMobileWorldContentPath(resourcePath, language string) string {
 	defer resp.Body.Close()
 
 	// Download the zipped content
-	zipPath := fmt.Sprintf("world_sql_content_%s.content", language)
+	zipPath := zippedDBName
 	output, err := os.OpenFile(zipPath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		fmt.Println("Failed to open output file for writing: ", err.Error())
@@ -204,21 +413,62 @@ func downloadMobileWorldContentPath(resourcePath, language string) string {
 // reading the desired fields out of the manifest and inserting them into the new relational DB.
 // The checksum provided is the md5 of the SQLite database file being processed. This should
 // be stored when the new table is written to provide caching support next time.
-func processManifestDB(locale, checksum, sqlitePath string) error {
+func processWorldContentsManifestDB(locale, checksum, sqlitePath string, itemLimit int) error {
 
-	input, err := GetInputDBConnection(sqlitePath)
+	in, err := GetInputDBConnection(sqlitePath)
 	if err != nil {
 		fmt.Println("Error opening the input database: ", err.Error())
 		return err
 	}
-	defer input.Database.Close()
+	//defer in.Database.Close()
 	_, err = GetOutputDBConnection()
 	if err != nil {
 		fmt.Println("Error opening output database: ", err.Error())
 		return err
 	}
 
-	inRows, err := input.GetItemDefinitions()
+	// DestinyInventoryItemDefinitions
+	err = parseItemDefinitions(in, locale, checksum, itemLimit)
+
+	// DestinyInventoryBucketDefinition
+	err = parseBucketDefinitions(in, locale, checksum)
+
+	// Share a single transaction for all activity related tables as they have foreign key constraints
+	// that need to be removed/added to import the new data.
+	err = output.OpenTransaction()
+	if err != nil {
+		panic("Failed to open activities transaction: " + err.Error())
+	}
+	output.RemoveActivityConstraints()
+	output.CommitTransaction()
+
+	err = output.OpenTransaction()
+	if err != nil {
+		panic("Failed to open activities transaction: " + err.Error())
+	}
+	err = parseActivityModifiers(in, locale, checksum)
+	err = parseActivityTypes(in, locale, checksum)
+	err = parseActivityModes(in, locale, checksum)
+	err = parsePlaces(in, locale, checksum)
+	err = parseDestinations(in, locale, checksum)
+	err = parseActivities(in, locale, checksum)
+	output.CommitTransaction()
+
+	err = output.OpenTransaction()
+	if err != nil {
+		panic("Failed to open activities transaction: " + err.Error())
+	}
+	output.AddActivityConstraints()
+	err = output.CommitTransaction()
+	if err != nil {
+		panic("Failed to commit activities transaction: " + err.Error())
+	}
+
+	return err
+}
+
+func parseItemDefinitions(inputDB *InputDB, locale, checksum string, itemLimit int) error {
+	inRows, err := inputDB.GetItemDefinitions()
 	if err != nil {
 		fmt.Println("Error reading item definitions from sqlite: ", err.Error())
 		return err
@@ -234,6 +484,10 @@ func processManifestDB(locale, checksum, sqlitePath string) error {
 		json.Unmarshal([]byte(row.JSON), &item)
 
 		itemDefs = append(itemDefs, &item)
+
+		if itemLimit != -1 && len(itemDefs) == itemLimit {
+			break
+		}
 	}
 
 	fmt.Printf("Processed %d item definitions\n", len(itemDefs))
@@ -244,4 +498,179 @@ func processManifestDB(locale, checksum, sqlitePath string) error {
 	}
 
 	return err
+}
+
+func parseBucketDefinitions(inputDB *InputDB, locale, checksum string) error {
+
+	bucketRows, err := inputDB.GetBucketDefinitions()
+	if err != nil {
+		fmt.Println("Error reading item definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer bucketRows.Close()
+
+	bucketDefs := make([]*BucketDefinition, 0)
+	for bucketRows.Next() {
+		row := ManifestRow{}
+		bucketRows.Scan(&row.ID, &row.JSON)
+
+		bucket := BucketDefinition{}
+		json.Unmarshal([]byte(row.JSON), &bucket)
+
+		bucketDefs = append(bucketDefs, &bucket)
+	}
+
+	fmt.Printf("Processed %d bucket definitions\n", len(bucketDefs))
+
+	return output.DumpNewBucketDefintions(locale, checksum, bucketDefs)
+}
+
+func parseActivityModifiers(inputDB *InputDB, locale, checksum string) error {
+
+	modifierRows, err := inputDB.GetActivityModifierDefinitions()
+	if err != nil {
+		fmt.Println("Error reading item definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer modifierRows.Close()
+
+	modifierDefs := make([]*ActivityModifierDefinition, 0)
+	for modifierRows.Next() {
+		row := ManifestRow{}
+		modifierRows.Scan(&row.ID, &row.JSON)
+
+		modifier := ActivityModifierDefinition{}
+		json.Unmarshal([]byte(row.JSON), &modifier)
+
+		modifierDefs = append(modifierDefs, &modifier)
+	}
+
+	fmt.Printf("Processed %d activity modifier definitions\n", len(modifierDefs))
+
+	return output.DumpNewActivityModifierDefinitions(locale, checksum, modifierDefs)
+}
+
+func parseActivityTypes(inputDB *InputDB, locale, checksum string) error {
+
+	activityTypeRows, err := inputDB.GetActivityTypeDefinitions()
+	if err != nil {
+		fmt.Println("Error reading activity types from sqlite: ", err.Error())
+		return err
+	}
+	defer activityTypeRows.Close()
+
+	activityTypeDefs := make([]*ActivityTypeDefinition, 0)
+	for activityTypeRows.Next() {
+		row := ManifestRow{}
+		activityTypeRows.Scan(&row.ID, &row.JSON)
+
+		activityType := ActivityTypeDefinition{}
+		json.Unmarshal([]byte(row.JSON), &activityType)
+
+		activityTypeDefs = append(activityTypeDefs, &activityType)
+	}
+
+	fmt.Printf("Processed %d activity type definitions\n", len(activityTypeDefs))
+
+	return output.DumpNewActivityTypeDefinitions(locale, checksum, activityTypeDefs)
+}
+
+func parseActivityModes(inputDB *InputDB, locale, checksum string) error {
+
+	activityModeRows, err := inputDB.GetActivityModeDefinitions()
+	if err != nil {
+		fmt.Println("Error reading activity mode definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer activityModeRows.Close()
+
+	activityModeDefs := make([]*ActivityModeDefintion, 0)
+	for activityModeRows.Next() {
+		row := ManifestRow{}
+		activityModeRows.Scan(&row.ID, &row.JSON)
+
+		mode := ActivityModeDefintion{}
+		json.Unmarshal([]byte(row.JSON), &mode)
+
+		activityModeDefs = append(activityModeDefs, &mode)
+	}
+
+	fmt.Printf("Processed %d activity mode definitions\n", len(activityModeDefs))
+
+	return output.DumpNewActivityModeDefinitions(locale, checksum, activityModeDefs)
+}
+
+func parseActivities(inputDB *InputDB, locale, checksum string) error {
+
+	activityRows, err := inputDB.GetActivityDefinitions()
+	if err != nil {
+		fmt.Println("Error reading activity definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer activityRows.Close()
+
+	activityDefs := make([]*ActivityDefinition, 0)
+	for activityRows.Next() {
+		row := ManifestRow{}
+		activityRows.Scan(&row.ID, &row.JSON)
+
+		activity := ActivityDefinition{}
+		json.Unmarshal([]byte(row.JSON), &activity)
+
+		activityDefs = append(activityDefs, &activity)
+	}
+
+	fmt.Printf("Processed %d activity definitions\n", len(activityDefs))
+
+	return output.DumpNewActivityDefinitions(locale, checksum, activityDefs)
+}
+
+func parsePlaces(inputDB *InputDB, locale, checksum string) error {
+
+	placeRows, err := inputDB.GetPlaceDefinitions()
+	if err != nil {
+		fmt.Println("Error reading place definitions from sqlite: ", err.Error())
+		return err
+	}
+	defer placeRows.Close()
+
+	placeDefs := make([]*PlaceDefinition, 0)
+	for placeRows.Next() {
+		row := ManifestRow{}
+		placeRows.Scan(&row.ID, &row.JSON)
+
+		place := PlaceDefinition{}
+		json.Unmarshal([]byte(row.JSON), &place)
+
+		placeDefs = append(placeDefs, &place)
+	}
+
+	fmt.Printf("Processed %d place definitions\n", len(placeDefs))
+
+	return output.DumpNewPlaceDefinitions(locale, checksum, placeDefs)
+}
+
+func parseDestinations(inputDB *InputDB, locale, checksum string) error {
+
+	destinationRows, err := inputDB.GetDestinationDefinitions()
+	if err != nil {
+		fmt.Println("Error reading destination defintions from sqlite: ", err.Error())
+		return err
+	}
+	defer destinationRows.Close()
+
+	destinationDefs := make([]*DestinationDefintion, 0)
+	for destinationRows.Next() {
+		row := ManifestRow{}
+		destinationRows.Scan(&row.ID, &row.JSON)
+
+		destination := DestinationDefintion{}
+		json.Unmarshal([]byte(row.JSON), &destination)
+
+		destinationDefs = append(destinationDefs, &destination)
+	}
+
+	fmt.Printf("Processed %d destination definitions\n", len(destinationDefs))
+
+	return output.DumpNewDestinationDefinitions(locale, checksum, destinationDefs)
 }
