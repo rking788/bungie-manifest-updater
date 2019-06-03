@@ -451,14 +451,14 @@ func processWorldContentsManifestDB(locale, checksum, sqlitePath string, itemLim
 	err = parseActivityModes(in, locale, checksum)
 	err = parsePlaces(in, locale, checksum)
 	err = parseDestinations(in, locale, checksum)
-	err = parseActivities(in, locale, checksum)
+	//err = parseActivities(in, locale, checksum)
 	output.CommitTransaction()
 
 	err = output.OpenTransaction()
 	if err != nil {
 		panic("Failed to open activities transaction: " + err.Error())
 	}
-	output.AddActivityConstraints()
+	//output.AddActivityConstraints()
 	err = output.CommitTransaction()
 	if err != nil {
 		panic("Failed to commit activities transaction: " + err.Error())
